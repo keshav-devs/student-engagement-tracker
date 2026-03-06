@@ -194,5 +194,3 @@ Deployment steps:
 
 **Keshav Gupta**  
 B.Tech Computer Science Engineering  
-
-**Chitkara University**
