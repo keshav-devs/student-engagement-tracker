@@ -32,3 +32,27 @@ To eliminate AI "jitter" and hardware lag, we implemented advanced signal proces
 - **Data Viz:** Plotly
 - **Database:** SQLite (Local Persistence)
 - **Language:** Python 3.11
+
+---
+
+🚀 Installation & Deployment
+Local Setup
+Clone the repository:
+
+Bash
+git clone [https://github.com/yourusername/engagement-tracker.git](https://github.com/yourusername/engagement-tracker.git)
+cd engagement-tracker
+Install dependencies:
+
+Bash
+pip install -r requirements.txt
+Run the application:
+
+Bash
+streamlit run app.py
+Cloud Deployment
+This repo is pre-configured for Streamlit Community Cloud.
+
+The packages.txt ensures Linux-level OpenCV dependencies are handled automatically.
+
+Ensure your GitHub repo is public and connect it directly via the Streamlit Cloud dashboard.
