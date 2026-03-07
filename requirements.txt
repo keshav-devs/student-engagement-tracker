@@ -5,5 +5,5 @@ pandas
 plotly
 matplotlib
 seaborn
-streamlit-webrtc==0.47.5
+streamlit-webrtc==0.47.6
 av==10.0.0
