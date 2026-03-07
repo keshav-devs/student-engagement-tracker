@@ -229,3 +229,4 @@ else:
         
     st.session_state.start_time = None
     frame_placeholder.info("Camera is currently stopped. Check the box in the sidebar to start.")
+
