@@ -9,10 +9,13 @@ from datetime import datetime, timedelta
 from streamlit_webrtc import webrtc_streamer, RTCConfiguration, WebRtcMode
 import sys
 
-# Python Version Alert
-if sys.version_info >= (3, 13):
-    st.sidebar.error(f"⚠️ **Incompatible Python version detected ({sys.version_info.major}.{sys.version_info.minor})**")
-    st.sidebar.warning("MediaPipe may fail on Python 3.13+. Please use **Python 3.11 or 3.12** in Streamlit Cloud settings.")
+# Attempt to handle cv2 import failure gracefully
+try:
+    import cv2
+except ImportError as e:
+    st.error(f"⚠️ **Critical Error: OpenCV failed to load.** {e}")
+    st.info("This is usually due to a missing system library on Streamlit Cloud. Please try 'Reboot' from the Manage App menu.")
+    st.stop()
 
 # Import the renamed module
 try:
@@ -83,6 +86,12 @@ st.markdown("""
 # Sidebar
 with st.sidebar:
     st.header("Control Panel")
+    
+    # Python Version Alert in Sidebar
+    if sys.version_info >= (3, 13):
+        st.error(f"⚠️ **Incompatible Python detected ({sys.version_info.major}.{sys.version_info.minor})**")
+        st.warning("Please use **Python 3.11** in settings.")
+
     new_show_landmarks = st.checkbox("Show Landmarks", value=app_state.show_landmarks, key="landmarks_toggle")
     with app_state.lock:
         app_state.show_landmarks = new_show_landmarks
@@ -107,7 +116,7 @@ with col_main:
     st.subheader("Live Camera Feed")
     # Added defensive check to ensure ctx is created before use
     ctx = webrtc_streamer(
-        key="engagement-tracker-v2", # Changed key to force re-initialization
+        key="engagement-tracker-v3", # Bumped key to force clean reload
         mode=WebRtcMode.SENDRECV,
         rtc_configuration=RTC_CONFIGURATION,
         video_frame_callback=video_frame_callback,
