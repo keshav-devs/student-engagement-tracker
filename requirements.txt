@@ -4,5 +4,6 @@ mediapipe
 matplotlib
 seaborn
 pandas
+plotly
 streamlit-webrtc
 av
