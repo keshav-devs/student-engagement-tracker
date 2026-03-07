@@ -7,6 +7,12 @@ import time
 import threading
 from datetime import datetime, timedelta
 from streamlit_webrtc import webrtc_streamer, RTCConfiguration, WebRtcMode
+import sys
+
+# Python Version Alert
+if sys.version_info >= (3, 13):
+    st.sidebar.error(f"⚠️ **Incompatible Python version detected ({sys.version_info.major}.{sys.version_info.minor})**")
+    st.sidebar.warning("MediaPipe may fail on Python 3.13+. Please use **Python 3.11 or 3.12** in Streamlit Cloud settings.")
 
 # Import the renamed module
 try:
@@ -17,7 +23,10 @@ except ImportError:
 from db_service import init_db, get_recent_data, get_all_data
 
 # Initialize SQLite database
-init_db()
+try:
+    init_db()
+except Exception as e:
+    st.error(f"Database Error: {e}")
 
 st.set_page_config(page_title="Student Engagement Tracker", layout="wide", page_icon="📈")
 st.title("👨‍🏫 Student Engagement Tracker")
