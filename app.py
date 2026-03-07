@@ -17,9 +17,17 @@ init_db()
 st.set_page_config(page_title="Student Engagement Tracker", layout="wide", page_icon="📈")
 st.title("👨‍🏫 Student Engagement Tracker")
 
-# Performance Tuning for Web-RTC
+# Performance Tuning for Web-RTC (Added more STUN servers for better connectivity)
 RTC_CONFIGURATION = RTCConfiguration(
-    {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
+    {
+        "iceServers": [
+            {"urls": ["stun:stun.l.google.com:19302"]},
+            {"urls": ["stun:stun1.l.google.com:19302"]},
+            {"urls": ["stun:stun2.l.google.com:19302"]},
+            {"urls": ["stun:stun3.l.google.com:19302"]},
+            {"urls": ["stun:stun4.l.google.com:19302"]},
+        ]
+    }
 )
 
 class AppState:
