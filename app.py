@@ -4,229 +4,156 @@ import pandas as pd
 import plotly.graph_objects as go
 import numpy as np
 import time
+import threading
+from datetime import datetime, timedelta
+from streamlit_webrtc import webrtc_streamer, RTCConfiguration, WebRtcMode
+
 from vision import process_frame, release_resources
 from db_service import init_db, get_recent_data, get_all_data
-
-# 1. Silence Warnings (layout='wide' at very top)
-st.set_page_config(page_title="Student Engagement Tracker", layout="wide", page_icon="📈")
 
 # Initialize SQLite database
 init_db()
 
+st.set_page_config(page_title="Student Engagement Tracker", layout="wide", page_icon="📈")
 st.title("👨‍🏫 Student Engagement Tracker")
 
-# Apply Custom Styled CSS
+# Performance Tuning for Web-RTC
+RTC_CONFIGURATION = RTCConfiguration(
+    {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
+)
+
+class AppState:
+    def __init__(self):
+        self.current_cei = 0.0
+        self.peak_cei = 0.0
+        self.show_landmarks = False
+        self.lock = threading.Lock()
+
+if "app_state" not in st.session_state:
+    st.session_state.app_state = AppState()
+
+app_state = st.session_state.app_state
+
+def video_frame_callback(frame):
+    img = frame.to_ndarray(format="bgr24")
+    with app_state.lock:
+        local_show_landmarks = app_state.show_landmarks
+    
+    # Process frame using existing vision logic
+    processed_frame, student_count, cei_raw = process_frame(img, show_landmarks=local_show_landmarks)
+    
+    with app_state.lock:
+        app_state.current_cei = cei_raw
+        if cei_raw > app_state.peak_cei:
+            app_state.peak_cei = cei_raw
+            
+    import av
+    return av.VideoFrame.from_ndarray(processed_frame, format="bgr24")
+
+# Custom CSS
 st.markdown("""
 <style>
-    /* Rounded corners for camera feed */
-    img {
-        border-radius: 15px;
-    }
-    
-    /* Live Status Light */
-    .status-active {
-        color: #00FF00 !important;
-        font-size: 24px;
-        font-weight: bold;
-        text-shadow: 0 0 10px #00FF00;
-    }
-    
-    .status-inactive {
-        color: #888888 !important;
-        font-size: 24px;
-        font-weight: bold;
-    }
+    canvas, video { border-radius: 15px !important; }
+    .status-active { color: #00FF00 !important; font-size: 24px; font-weight: bold; text-shadow: 0 0 10px #00FF00; }
+    .status-inactive { color: #888888 !important; font-size: 24px; font-weight: bold; }
 </style>
 """, unsafe_allow_html=True)
 
-from collections import deque
-from datetime import datetime, timedelta
-
-# Session tracking variables
-if 'start_time' not in st.session_state:
-    st.session_state.start_time = None
-if 'peak_cei' not in st.session_state:
-    st.session_state.peak_cei = 0
-if 'current_cei' not in st.session_state:
-    st.session_state.current_cei = 0
-if 'wma_buffer' not in st.session_state:
-    st.session_state.wma_buffer = deque(maxlen=15)  # 15-frame Weighted Moving Average
-if 'chart_buffer' not in st.session_state:
-    st.session_state.chart_buffer = deque(maxlen=900)  # ~30s at 30fps
-
-# Sidebar Migration
+# Sidebar
 with st.sidebar:
     st.header("Control Panel")
-    run_camera = st.checkbox("Start Camera", value=False)
+    new_show_landmarks = st.checkbox("Show Landmarks", value=app_state.show_landmarks, key="landmarks_toggle")
+    with app_state.lock:
+        app_state.show_landmarks = new_show_landmarks
     
     st.markdown("---")
     st.markdown("### Session Statistics")
-    
-    # Native Streamlit Native Containers for border + light/dark adaptivity
-    with st.container(border=True):
-        metric_cei = st.empty()
-    with st.container(border=True):
-        metric_peak = st.empty()
-    with st.container(border=True):
-        metric_time = st.empty()
-    
-    # Fill with placeholder/initial values immediately
-    metric_cei.metric(label="Current Engagement (CEI)", value=f"{st.session_state.current_cei:.1f}%")
-    metric_peak.metric(label="Peak Engagement", value=f"{st.session_state.peak_cei:.1f}%")
-    
-    elapsed_seconds = int(time.time() - st.session_state.start_time) if st.session_state.start_time else 0
-    session_time = f"{elapsed_seconds // 60}m {elapsed_seconds % 60}s"
-    metric_time.metric(label="Total Session Time", value=session_time)
+    metric_cei_placeholder = st.empty()
+    metric_peak_placeholder = st.empty()
+    metric_time_placeholder = st.empty()
 
     st.markdown("---")
-    
-    st.markdown("### Export Logs")
-    all_data = get_all_data()
-    if not all_data.empty:
-        # Report Fix: HH:MM:SS format
-        if pd.api.types.is_datetime64_any_dtype(all_data['timestamp']):
-            all_data['timestamp'] = all_data['timestamp'].dt.strftime('%H:%M:%S')
-        else:
-            # If it's stored as a string, parse and re-format
-            try:
-                all_data['timestamp'] = pd.to_datetime(all_data['timestamp']).dt.strftime('%H:%M:%S')
-            except Exception:
-                pass
-        csv = all_data.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="📥 Download Report (CSV)",
-            data=csv,
-            file_name="engagement_report.csv",
-            mime="text/csv",
-        )
+    if st.button("Generate Report"):
+        with st.status("Fetching data...", expanded=False):
+            all_data = get_all_data()
+            if not all_data.empty:
+                csv = all_data.to_csv(index=False).encode('utf-8')
+                st.download_button("📥 Click to Download CSV", csv, "engagement_report.csv", "text/csv")
+            else:
+                st.info("No data available yet.")
 
-    st.markdown("---")
-    st.markdown("**Powered by:** OpenCV, Mediapipe, SQLite")
-    
-    st.markdown("---")
-    st.markdown("### Debug")
-    show_landmarks = st.checkbox("Show Landmarks", value=False)
-
-# Aesthetic Layout: Two columns (Video | Status & Chart)
+# Main Layout
 col_main, col_status = st.columns([2.5, 1])
 
 with col_main:
     st.subheader("Live Camera Feed")
-    frame_placeholder = st.empty()
+    ctx = webrtc_streamer(
+        key="engagement-tracker",
+        mode=WebRtcMode.SENDRECV,
+        rtc_configuration=RTC_CONFIGURATION,
+        video_frame_callback=video_frame_callback,
+        media_stream_constraints={"video": True, "audio": False},
+        async_processing=True,
+    )
 
 with col_status:
     st.subheader("Live Status")
     status_placeholder = st.empty()
-    status_placeholder.markdown("<p class='status-inactive'>⚫ Inactive</p>", unsafe_allow_html=True)
+    
+    if ctx.state.playing:
+        if 'start_time' not in st.session_state:
+            st.session_state.start_time = time.time()
+        status_placeholder.markdown("<p class='status-active'>🟢 Active Tracking</p>", unsafe_allow_html=True)
+    else:
+        st.session_state.pop('start_time', None)
+        status_placeholder.markdown("<p class='status-inactive'>⚫ Inactive</p>", unsafe_allow_html=True)
     
     st.markdown("### Engagement Trend")
     chart_placeholder = st.empty()
 
-if run_camera:
-    if st.session_state.start_time is None:
-        st.session_state.start_time = time.time()
-        
-    status_placeholder.markdown("<p class='status-active'>🟢 Active Tracking</p>", unsafe_allow_html=True)
-    
-    cap = cv2.VideoCapture(0)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1) # Eliminate Lag
-    
-    try:
-        frame_count = 0
-    
-        while run_camera:
-            ret, frame = cap.read()
-            if not ret:
-                st.error("Could not read frame from webcam.")
-                break
-            
-            frame_count += 1
-            
-            processed_frame, student_count, cei_raw = process_frame(frame, show_landmarks=show_landmarks)
-            
-            # 15-Frame Weighted Moving Average (WMA)
-            # Recent frames weighted more heavily: weights [1, 2, 3, ..., 15]
-            st.session_state.wma_buffer.append(cei_raw)
-            buf = list(st.session_state.wma_buffer)
-            weights = list(range(1, len(buf) + 1))  # [1, 2, ..., n]
-            wma_value = sum(w * v for w, v in zip(weights, buf)) / sum(weights)
-            
-            st.session_state.current_cei = wma_value
-        
-            # Correctly update Peak CEI logic
-            if wma_value > st.session_state.peak_cei:
-                st.session_state.peak_cei = wma_value
-            
-            elapsed_seconds = int(time.time() - st.session_state.start_time)
-            session_time = f"{elapsed_seconds // 60}m {elapsed_seconds % 60}s"
-        
-            # Update sidebar metrics dynamically
-            metric_cei.metric(label="Current Engagement (CEI)", value=f"{wma_value:.1f}%")
-            metric_peak.metric(label="Peak Engagement", value=f"{st.session_state.peak_cei:.1f}%")
-            metric_time.metric(label="Total Session Time", value=session_time)
-        
-            # Update Streamlit image
-            processed_frame_rgb = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB)
-            frame_placeholder.image(processed_frame_rgb, channels="RGB", use_container_width=True)
-        
-            # Always collect data into buffer
-            now = datetime.now()
-            st.session_state.chart_buffer.append({'Time': now, 'CEI': wma_value})
-            
-            # Only render the chart every 5 frames to prevent blinking
-            if frame_count % 5 == 0:
-                df_chart = pd.DataFrame(list(st.session_state.chart_buffer))
-                cutoff = now - timedelta(seconds=30)
-                df_chart = df_chart[df_chart['Time'] >= cutoff]
-                
-                if not df_chart.empty:
-                    df_chart['CEI'] = df_chart['CEI'].clip(0, 100)
-                    
-                    fig = go.Figure()
-                    fig.add_trace(go.Scatter(
-                        x=df_chart['Time'],
-                        y=df_chart['CEI'],
-                        mode='lines',
-                        line=dict(shape='spline', smoothing=1.3, color='#6C63FF', width=3),
-                        fill='tozeroy',
-                        fillcolor='rgba(108, 99, 255, 0.2)',
-                        hovertemplate='%{y:.1f}%<extra></extra>'
-                    ))
-                    
-                    fig.update_layout(
-                        paper_bgcolor='rgba(0,0,0,0)',
-                        plot_bgcolor='rgba(0,0,0,0)',
-                        margin=dict(l=0, r=0, t=10, b=0),
-                        yaxis=dict(range=[0, 100], title='CEI %', showgrid=False),
-                        xaxis=dict(
-                            range=[cutoff, now],
-                            showticklabels=True,
-                            tickformat='%M:%S',
-                            title='Time',
-                            showgrid=False
-                        ),
-                        showlegend=False,
-                        height=280
-                    )
-                    
-                    chart_placeholder.plotly_chart(
-                        fig, use_container_width=True,
-                        config={'displayModeBar': False}
-                    )
-            
-    finally:
-        cap.release()
-        release_resources()
-else:
-    # Release camera explicitly when unchecked to prevent hangups
-    try:
-        cap.release()
-        release_resources()
-    except Exception:
-        pass
-        
-    st.session_state.start_time = None
-    frame_placeholder.info("Camera is currently stopped. Check the box in the sidebar to start.")
+# Initialization for chart data
+if 'chart_df' not in st.session_state:
+    st.session_state.chart_df = pd.DataFrame(columns=['Time', 'CEI'])
 
+# UI Update loop
+if ctx.state.playing:
+    try:
+        with app_state.lock:
+            current_cei = app_state.current_cei
+            peak_cei = app_state.peak_cei
+        
+        elapsed = int(time.time() - st.session_state.start_time) if 'start_time' in st.session_state else 0
+        metric_cei_placeholder.metric("Current Engagement (CEI)", f"{current_cei:.1f}%")
+        metric_peak_placeholder.metric("Peak Engagement", f"{peak_cei:.1f}%")
+        metric_time_placeholder.metric("Total Session Time", f"{elapsed // 60}m {elapsed % 60}s")
+        
+        now = datetime.now()
+        new_row = pd.DataFrame([{'Time': now, 'CEI': current_cei}])
+        st.session_state.chart_df = pd.concat([st.session_state.chart_df, new_row], ignore_index=True)
+        cutoff = now - timedelta(seconds=30)
+        st.session_state.chart_df = st.session_state.chart_df[st.session_state.chart_df['Time'] >= cutoff]
+        
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=st.session_state.chart_df['Time'], y=st.session_state.chart_df['CEI'],
+            mode='lines', line=dict(shape='spline', color='#6C63FF', width=3),
+            fill='tozeroy', fillcolor='rgba(108, 99, 255, 0.2)'
+        ))
+        fig.update_layout(
+            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+            margin=dict(l=0, r=0, t=10, b=0), height=250,
+            yaxis=dict(range=[0, 100]), xaxis=dict(showgrid=False, tickformat='%M:%S')
+        )
+        chart_placeholder.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+        
+        # Reduced rerun interval to 1s to save server resources and prevent flickering
+        time.sleep(1)
+        st.rerun()
+    except RuntimeError:
+        # Prevents crashing if the app is shutting down
+        pass
+else:
+    metric_cei_placeholder.metric("Current Engagement (CEI)", "0.0%")
+    metric_peak_placeholder.metric("Peak Engagement", f"{app_state.peak_cei:.1f}%")
+    metric_time_placeholder.metric("Total Session Time", "0m 0s")
+    chart_placeholder.info("Start the stream to see the engagement trend.")
