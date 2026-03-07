@@ -1,9 +1,9 @@
+opencv-python-headless
+mediapipe
 streamlit>=1.28.0
-opencv-python-headless>=4.8.0
-mediapipe>=0.10.14
-matplotlib
-seaborn
 pandas
 plotly
+matplotlib
+seaborn
 streamlit-webrtc>=0.47.0
 av>=10.0.0
